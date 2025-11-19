@@ -12,11 +12,7 @@ class contServo {
     int servoSpd;
     int rotateSpd;
     int totalSpd;
-    float error;
-    float integral;
-    float previousError;
-    unsigned long previousTime;
-    int driveDirection;
+    // int driveDirection;
 
     Servo servo;
     Encoder& encoder;
@@ -26,10 +22,9 @@ class contServo {
     void initialize();
     void setSpeed(int speed);
     void stop();
-
     void setZero();
     void goToAngle(int angle);
-    int closestAngle(int a, int b);
+    int closestAngle(int target, int current);
 
 };
 
