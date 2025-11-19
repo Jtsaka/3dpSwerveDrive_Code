@@ -7,6 +7,8 @@ A separate Python script on the edge computing device (RaspberryPi 5 or NVIDIA J
 
 Another feature is that utilizing OpenAI's Faster Whisper model, a different Python script on the edgecomputing device takes in audio input, processes and transcribes it, and similarly sends the data via UART to the Arduino for processing to determine the angle and distance it should drive to.
 
+Aforementioned repo to ASR/CV scripts can be found in this [repo](https://github.com/Jtsaka/ASR-CV_Robot)
+
 ### Object Oriented Programing (OOP) structure:
 - Motors
 - Continuous Servos
