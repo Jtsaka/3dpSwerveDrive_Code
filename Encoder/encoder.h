@@ -1,6 +1,5 @@
 #ifndef ENCODER_H
 #define ENCODER_H
-
 #include "spark.h"
 
 class Encoder {
