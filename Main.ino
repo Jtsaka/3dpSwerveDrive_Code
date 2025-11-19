@@ -1,178 +1,214 @@
-#include "spark.h"
 #include "contServo.h"
 #include "encoder.h"
+#include "spark.h"
+#include <math.h>
 
-bool isStopped = false;
+//Function Prototypes
+void setSparkSpeed(Spark& spark, bool reverse, int speedOffset);
+void updateWheelPos(int ang, float spd);
+void setRotation(int setting, int speedOffset);
+int closestAngle(int target, int current);
+bool getCameraData(String data);
 
-contServo servoA(3); //module 1
-contServo servoB(4); //module 2
-contServo servoC(5);  //module 3
-contServo servoD(6); //module 4
-
-Encoder encoderA(A0, servoA); //module 1
-Encoder encoderB(A1, servoB);
-Encoder encoderC(A2, servoC);
-Encoder encoderD(A3, servoD);
-
-Spark sparkA(7); 
+Encoder encoderA(A1);
+contServo servoA(3, encoderA);
+Spark sparkA(7);
+Encoder encoderB(A2);
+contServo servoB(4, encoderB);
 Spark sparkB(8);
+Encoder encoderC(A3);
+contServo servoC(5, encoderC);
 Spark sparkC(9);
+Encoder encoderD(A4);
+contServo servoD(6, encoderD);
 Spark sparkD(10);
 
-float Vx = 0;    // X translation from joystick
-float Vy = 0;    // Y translation from joystick
-float omega = 0; // Rotational velocity (omega)
+const int MOD_1_OFFSET = 290;
+const int MOD_2_OFFSET = 47;
+const int MOD_3_OFFSET = 60;
+const int MOD_4_OFFSET = 200;
 
-float L = 19;  // Length of robot in inches
-float W = 19;  // Width of robot in inches
+int targetAngle1 = MOD_1_OFFSET;
+int targetAngle2 = MOD_2_OFFSET;
+int targetAngle3 = MOD_3_OFFSET;
+int targetAngle4 = MOD_4_OFFSET;
 
-float lerpVal = 0.35;
+int defaultSpd = 1500;
+int inc = 500; //Base increment
 
-float lerp(float startVal, float stopVal, float lerpVal) { //lerp to reduce "teleporting"
-    return startVal + lerpVal * (stopVal - startVal);
-}
+float dist_setpoint = 0.2;  //0.2m away from object
+float ang_setpoint  = 0.0;  //0.0 degrees (center)
+float angle_tolerance = 5.0;
+float dist_tolerance  = 0.05;
+
+float Kp_ang  = 0.8;
+float Kp_dist = 200.0;
+
+float camera_dist = 0.0;
+float camera_ang  = 0.0;
+float camera_strafe = 0.0;
 
 void setup() {
-    Serial.begin(115200); // Set baud rate
+  Serial.begin(500000);
 
-    sparkA.initialize();
-    sparkB.initialize();
-    sparkC.initialize();
-    sparkD.initialize();
-    
-    encoderA.goToDefaultPos();
-    encoderB.goToDefaultPos();
-    encoderC.goToDefaultPos();
-    encoderD.goToDefaultPos();
+  servoA.initialize(); servoB.initialize();
+  servoC.initialize(); servoD.initialize();
 
-    servoA.initialize();
-    servoB.initialize();
-    servoC.initialize();
-    servoD.initialize();
+  sparkA.initialize(); sparkB.initialize();
+  sparkC.initialize(); sparkD.initialize();
 
+  Serial.println("Starting Simple Control");
 }
 
 void loop() {
-    if (Serial.available() > 0) {
-        String data = Serial.readStringUntil('\n'); // Read incoming command
-        commands(data);
+  if (Serial.available() > 0) {
+    String data = Serial.readStringUntil('\n');
+
+    bool detectObj = getCameraData(data);
+
+    if (detectObj && !(camera_ang == 0.0 && camera_dist == 0.0)) { //testing only for rotation right now
+      float ang_error  = camera_ang - ang_setpoint;
+      float dist_error = camera_dist - dist_setpoint;
+      
+      if(fabs(camera_ang) <= angle_tolerance){
+        setSparkSpeed(sparkA, false, 0);
+        setSparkSpeed(sparkB, false, 0);
+        setSparkSpeed(sparkC, false, 0);
+        setSparkSpeed(sparkD, false, 0);
+      }
+
+      else if (fabs(ang_error) > angle_tolerance) {
+        int rot_speed = (int)(Kp_ang * ang_error);
+        rot_speed = constrain(rot_speed, -inc, inc);
+
+        int mag = abs(rot_speed);     
+        if (mag < 200) mag = 200;      
+
+        if (ang_error > 0) {
+          setRotation(-1,  mag);        //CCW
+        } 
+        else {
+          setRotation(0, mag);        //CW
+        }
+      } 
+      else { //stop motors at current alignment
+        setSparkSpeed(sparkA, false, 0);
+        setSparkSpeed(sparkB, false, 0);
+        setSparkSpeed(sparkC, false, 0);
+        setSparkSpeed(sparkD, false, 0);
+      }
+
+    } 
+    else { //no data/not valid
+      setRotation(0, 0);
     }
-    
-    if(isStopped){
-      delay(10);
-      return;
-    }
-
-    encoderA.readAngle();
-    encoderB.readAngle();
-    encoderC.readAngle();
-    encoderD.readAngle();
-
-    encoderA.setPID(encoderA.getError());
-    encoderB.setPID(encoderA.getError());
-    encoderC.setPID(encoderA.getError());
-    encoderD.setPID(encoderA.getError());
-    
-    //Wheel speeds calculation
-    float A = Vx - omega * (L / 2);
-    float B = Vx + omega * (L / 2);
-    float C = Vy - omega * (W / 2);
-    float D = Vy + omega * (W / 2);
-
-    float wheelSpeed1 = sqrt(B*B + C*C);
-    float wheelAngle1 = atan2(B, C) * 180/PI;
-
-    float wheelSpeed2 = sqrt(B*B + D*D);
-    float wheelAngle2 = atan2(B, D) * 180/PI;
-
-    float wheelSpeed3 = sqrt(A*A + D*D);
-    float wheelAngle3 = atan2(A, D) * 180/PI;
-
-    float wheelSpeed4 = sqrt(A*A + C*C);
-    float wheelAngle4 = atan2(A, C) * 180/PI;
-
-    encoderA.setTargetAngle(wheelAngle1);
-    encoderB.setTargetAngle(wheelAngle2);
-    encoderC.setTargetAngle(wheelAngle3);
-    encoderD.setTargetAngle(wheelAngle4);
-
-    encoderA.setPID(encoderA.getError());
-    encoderB.setPID(encoderB.getError());
-    encoderC.setPID(encoderC.getError());
-    encoderD.setPID(encoderD.getError());
-
-    sparkA.setSpeed(constrain(wheelSpeed1, 1000, 2000));
-    sparkB.setSpeed(constrain(wheelSpeed2, 1000, 2000));
-    sparkC.setSpeed(constrain(wheelSpeed3, 1000, 2000));
-    sparkD.setSpeed(constrain(wheelSpeed4, 1000, 2000));
-
-    delay(10);  // Small delay to prevent overwhelming the servo
+  }
+  
+  servoA.goToAngle(targetAngle1);
+  servoB.goToAngle(targetAngle2);
+  servoC.goToAngle(targetAngle3);
+  servoD.goToAngle(targetAngle4);
 }
 
-void commands(String data){
-  if (data == "BUTTON_A") {
-            Serial.println("A button pressed!");
-            Serial.println("Reset speed and angle!");
-            Serial.println(encoderA.readAngle() + "!");
-            isStopped = true;
+bool getCameraData(String data) { //(angle, distance, strafe)
+  int comma1 = data.indexOf(",");
+  if (comma1 == -1) return false;
 
-            sparkA.stopMotor();
-            sparkB.stopMotor();
-            sparkC.stopMotor();
-            sparkD.stopMotor();
+  int comma2 = data.indexOf(",", comma1 + 1);
+  if (comma2 == -1) return false;
 
-            encoderA.goToDefaultPos();
-            encoderB.goToDefaultPos();
-            encoderC.goToDefaultPos();
-            encoderD.goToDefaultPos();
+  String ang_str    = data.substring(0, comma1);
+  String dist_str   = data.substring(comma1 + 1, comma2);
+  String strafe_str = data.substring(comma2 + 1);
 
-            encoderA.setPID(encoderA.getError());
-            encoderB.setPID(encoderB.getError());
-            encoderC.setPID(encoderC.getError());
-            encoderD.setPID(encoderD.getError());
-        }
-        else if (data == "BUTTON_B") {
-            Serial.println("B button pressed!");
-            Serial.println("Resume spin");
-            isStopped = false;
-        }
-        else if (data == "BUTTON_Y") {
-            Serial.println("Y button pressed!");
-        }
-        else if (data == "BUTTON_X") {
-            Serial.println("X button pressed!");
-        }
+  if (ang_str == "" || dist_str == "" || strafe_str == "") return false;
 
-        //Drive joystick
-        else if (data.startsWith("stickLX:")) { 
-            String value = data.substring(8);  // Get the value after "stickLX:"
-            Serial.println("Left joystick X value: " + value);
-            Vx = atoi(value.c_str()); 
-        } 
-        else if (data.startsWith("stickLY:")) {
-            String value = data.substring(8);  // Get the value after "stickLY:"
-            Serial.println("Left joystick Y value: " + value);
-            Vy = atoi(value.c_str());
-        }
+  camera_ang   = ang_str.toFloat();
+  camera_dist  = dist_str.toFloat();
+  camera_strafe = strafe_str.toFloat();
+  return true;
+}
 
-        //Steer joystick
-        else if (data.startsWith("stickRX:")) {
-            String value = data.substring(8);  // Get the value after "stickRY:"
-            Serial.println("Right joystick X value: " + value);
-            omega = atoi(value.c_str());
-        }
-        else if (data.startsWith("stickRY:")) {
-            String value = data.substring(8);  // Get the value after "stickRY:"
-            Serial.println("Right joystick Y value: " + value);
-        }
+void setRotation(int setting, int speedOffset) {
+  int ang1, ang2, ang3, ang4;
 
-        //Flippers
-        else if (data.startsWith("triggerR:")) {
-            String value = data.substring(9);  // Get the value after "trigger_R:"
-            Serial.println("Right Trigger value: " + value);
-        }
-        else if (data.startsWith("triggerL:")) {
-            String value = data.substring(9);  // Get the value after "trigger_L:"
-            Serial.println("Left Trigger value: " + value);
-        }
+  if (setting == -1) {  //clockwise
+    ang1 = 315; ang2 = 45; ang3 = 135; ang4 = 225;
+  } 
+  else {              //counter-clockwise
+    ang1 = 135; ang2 = 225; ang3 = 315; ang4 = 45;
+  }
+
+  targetAngle1 = (ang1 + MOD_1_OFFSET) % 360;
+  targetAngle2 = (ang2 + MOD_2_OFFSET) % 360;
+  targetAngle4 = (ang4 + MOD_4_OFFSET) % 360;
+
+  int steeringTarget = ang3;
+  if (steeringTarget >= 0 && steeringTarget < 90) {
+      //map(135, 0, 90, 60, 140) --> 45 equivalent to 100 since halfway
+      targetAngle3 = map(steeringTarget, 0, 90, 60, 140);
+  } 
+  else if (steeringTarget >= 90 && steeringTarget < 180) {
+      targetAngle3 = map(steeringTarget, 90, 180, 140, 220);
+  } 
+  else if (steeringTarget >= 180 && steeringTarget < 270) {
+      //map(335, 180, 270, 220, 300) -> 225 equivalent to 260 since halfway
+      targetAngle3 = map(steeringTarget, 180, 270, 220, 300);
+  } 
+  else {
+      targetAngle3 = map(steeringTarget, 270, 360, 300, 420) % 360;
+  }
+
+  int currAng1 = encoderA.readAngle();
+  int currAng2 = encoderB.readAngle();
+  int currAng3 = encoderC.readAngle();
+  int currAng4 = encoderD.readAngle();
+
+  const int flipThresh = 90;
+  bool rev1 = false;
+  bool rev2 = false;
+  bool rev3 = false;
+  bool rev4 = false;
+
+  int clos1 = closestAngle(targetAngle1, currAng1);
+  int clos2 = closestAngle(targetAngle2, currAng2);
+  int clos3 = closestAngle(targetAngle3, currAng3);
+  int clos4 = closestAngle(targetAngle4, currAng4);
+  
+  if(abs(clos1) > flipThresh){
+    targetAngle1 = (targetAngle1 + 180) % 360;
+    rev1 = true;
+  }
+  if(abs(clos2) >= flipThresh){
+    targetAngle2 = (targetAngle2 + 180) % 360;
+    rev2 = true;
+  }
+  if(abs(clos3) >= flipThresh){
+    targetAngle3 = (targetAngle3 + 180) % 360;
+    rev3 = true;
+  }
+  if(abs(clos4) >= flipThresh){
+    targetAngle4 = (targetAngle4 + 180) % 360;
+    rev4 = true;
+  }
+
+  //Bias for module 4
+  int bias = 0;
+  if(setting != -1){
+    bias += 100;
+  }
+
+  setSparkSpeed(sparkA, rev1, speedOffset + bias);
+  setSparkSpeed(sparkB, rev2, speedOffset);
+  setSparkSpeed(sparkC, rev3, speedOffset);
+  setSparkSpeed(sparkD, rev4, speedOffset + bias);
+}
+
+void setSparkSpeed(Spark &spark, bool reverse, int speedOffset){
+  if (reverse) spark.setSpeed(defaultSpd - speedOffset);
+  else         spark.setSpeed(defaultSpd + speedOffset);
+}
+
+int closestAngle(int target, int current) {
+  return (target - current + 540) % 360 - 180;
 }
